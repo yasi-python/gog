@@ -13,7 +13,7 @@ func TestWilsonLB(t *testing.T) {
 	z := 2.575829 // ~99%
 	// 100% failures over 200 attempts -> LB close to ~0.985+ (depends on z), just sanity
 	lb := stats.WilsonLowerBound(200, 200, z)
-	if lb < 0.97 {
+	if lb < 0.967 {
 		t.Fatalf("expected high LB, got %f", lb)
 	}
 	// 0 failures

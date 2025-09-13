@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -20,7 +19,6 @@ import (
 	"github.com/yasi-python/go/pkg/logger"
 	"github.com/yasi-python/go/pkg/metrics"
 	"github.com/yasi-python/go/pkg/probe"
-	"github.com/yasi-python/go/pkg/quarantine"
 	"github.com/yasi-python/go/pkg/storage"
 )
 
@@ -41,11 +39,11 @@ func NewManager(cfg *config.Config, log *logger.Logger, db *storage.DB) *Manager
 	for _, o := range cfg.Origins {
 		if o.Type == "local" {
 			origins = append(origins, probe.LocalOrigin{})
-		} else if o.Type == "agent" && o.URL != "" {
-			origins = append(origins, probe.AgentOrigin{
-				name: o.Name, URL: o.URL, Token: o.Token,
-			})
-		}
+				} else if o.Type == "agent" && o.URL != "" {
+					origins = append(origins, probe.AgentOrigin{
+						Label: o.Name, URL: o.URL, Token: o.Token,
+					})
+				}
 	}
 	return &Manager{
 		cfg: cfg, log: log, db: db, origins: origins, snapDir: cfg.Service.SnapshotsDir,

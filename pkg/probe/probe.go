@@ -3,8 +3,10 @@ package probe
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -45,7 +47,7 @@ func tcpProbe(ctx context.Context, host string, port int, timeout time.Duration)
 	return Result{Success: true, Latency: time.Since(start), Method: "tcp"}
 }
 
-func tlsProbe(ctx context.Context, host string, port int, sni string, timeout time.Duration) Result {
+func tlsProbe(_ context.Context, host string, port int, sni string, timeout time.Duration) Result {
 	start := time.Now()
 	d := net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(&d, "tcp", fmt.Sprintf("%s:%d", host, port),
@@ -128,13 +130,13 @@ func (LocalOrigin) ProbeNode(ctx context.Context, n Node, opt Options) Result {
 }
 
 type AgentOrigin struct {
-	name  string
+	Label string
 	URL   string
 	Token string
 	HTTP  *http.Client
 }
 
-func (a AgentOrigin) Name() string { return a.name }
+func (a AgentOrigin) Name() string { return a.Label }
 
 // Agent’s simple /probe endpoint accepts json node and returns {success, latency_ms, method, err}
 func (a AgentOrigin) ProbeNode(ctx context.Context, n Node, opt Options) Result {
@@ -160,8 +162,11 @@ func (a AgentOrigin) ProbeNode(ctx context.Context, n Node, opt Options) Result 
 }
 
 func doJSON(ctx context.Context, c *http.Client, url string, token string, payload map[string]any) (map[string]any, error) {
-	j, _ := jsonMarshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytesReader(j))
+	j, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, io.NopCloser(bytesReader(j)))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -175,27 +180,21 @@ func doJSON(ctx context.Context, c *http.Client, url string, token string, paylo
 		return nil, errors.New("agent_http_" + resp.Status)
 	}
 	var out map[string]any
-	if err := jsonNewDecoder(resp.Body).Decode(&out); err != nil {
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
-
-// lightweight JSON helpers without adding deps
-type rd struct{ b []byte }
-func bytesReader(b []byte) *rd { return &rd{b} }
-func (r *rd) Read(p []byte) (int, error) { if len(r.b)==0 { return 0, ioEOF{} }; n:=copy(p, r.b); r.b=r.b[n:]; return n, nil }
-func (r *rd) Close() error { return nil }
-
-type ioEOF struct{}
-func (ioEOF) Error() string { return "EOF" }
-
-func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
-func jsonNewDecoder(r *rd) *json.Decoder { return json.NewDecoder(r) }
-
-// we need imports for helper
-// (kept here for simplicity)
-import (
-	"encoding/json"
-	"io"
-)
+// lightweight bytes reader helper to satisfy io.ReadCloser without extra deps
+type bytesRC struct{ b []byte }
+func bytesReader(b []byte) *bytesRC { return &bytesRC{b: b} }
+func (r *bytesRC) Read(p []byte) (int, error) {
+	if len(r.b) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.b)
+	r.b = r.b[n:]
+	return n, nil
+}
+func (r *bytesRC) Close() error { return nil }
