@@ -1,0 +1,70 @@
+# Global service config
+service:
+  http_listen: ":8080"            # API + metrics
+  metrics_path: "/metrics"
+  healthz_path: "/healthz"
+  dry_run: true                   # default true (two weeks recommended)
+  log_level: "info"               # debug|info|warn|error
+  data_dir: "data"                # BoltDB location
+  snapshots_dir: "snapshots"      # snapshots path
+  snapshot_retention_days: 30
+  max_deletions_per_day: 50       # safety throttle
+  concurrency: 100                # worker pool
+  rate_limit_per_target_per_minute: 10
+  reprobe_schedule_seconds: 300   # background re-probe interval (5m)
+
+subscriptions:
+  sources:
+    - "https://raw.githubusercontent.com/yasi-python/PSGd/refs/heads/main/output/base64/mix"
+    - "https://raw.githubusercontent.com/yasi-python/PSGS/refs/heads/main/subscriptions/xray/base64/mix"
+    - "https://raw.githubusercontent.com/yasi-python/vip/refs/heads/master/sub/sub_merge_base64.txt"
+    - "https://raw.githubusercontent.com/barry-far/V2ray-Config/refs/heads/main/All_Configs_base64_Sub.txt"
+    - "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/refs/heads/master/sub/sub_merge_base64.txt"
+    - "https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/refs/heads/main/all_configs.txt"
+    - "https://raw.githubusercontent.com/Epodonios/v2ray-configs/refs/heads/main/All_Configs_base64_Sub.txt"
+    - "https://raw.githubusercontent.com/Danialsamadi/v2go/refs/heads/main/All_Configs_Sub.txt"
+  fetch_interval_seconds: 1800      # 30m
+  per_source_limit: 2000
+  merged_limit: 2000
+  outputs:
+    plain_path: "output/merged_nodes.txt"
+    base64_path: "output/merged_sub_base64.txt"
+
+probe:
+  timeout_ms: 5000
+  retries: 2
+  backoff_initial_ms: 300
+  backoff_max_ms: 3000
+  http_probe_paths: ["/", "/health", "/"]
+  prefer_http_if_ws_or_path: true
+
+# Multi-origin probing: local + agents (optional)
+origins:
+  - name: "local"
+    type: "local"   # runs in this process
+    weight: 1
+  # Examples for remote agents (optional). Run cmd/agent on those servers.
+  # - name: "edge-eu"
+  #   type: "agent"
+  #   url: "http://edge-eu-agent:8081"
+  #   token: "CHANGE_ME"
+  #   weight: 1
+  # - name: "edge-us"
+  #   type: "agent"
+  #   url: "http://edge-us-agent:8081"
+  #   token: "CHANGE_ME"
+  #   weight: 1
+
+decision:
+  min_attempts_for_decision: 200
+  decision_confidence_z: 2.575829   # ~99%
+  quarantine_consecutive_failures: 10
+  quarantine_rechecks: ["1h","6h","24h","48h"]
+  delete_lower_bound_threshold: 0.995
+
+security:
+  allow_delete: false               # if true and not dry_run, deletions allowed
+  blacklist_ips: []                 # optional external check placeholder
+
+api:
+  rate_limit_per_minute: 120

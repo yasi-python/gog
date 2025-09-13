@@ -1,0 +1,26 @@
+services:
+  manager:
+    build: .
+    image: v2config-manager:latest
+    container_name: v2mgr
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+      - ./data:/data
+      - ./snapshots:/snapshots
+      - ./output:/output
+    environment:
+      - CONFIG=/config.yaml
+    command: ["/usr/local/bin/v2mgr", "/config.yaml"]
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # Optional remote agent example (local container)
+  agent1:
+    build: .
+    image: v2config-manager:latest
+    container_name: v2agent1
+    command: ["/usr/local/bin/v2agent"]
+    ports:
+      - "8081:8081"
+    restart: unless-stopped

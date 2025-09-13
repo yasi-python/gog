@@ -1,0 +1,20 @@
+# Go
+/bin/
+/dist/
+*.exe
+*.out
+
+# IDE
+.vscode/
+.idea/
+
+# DB & snapshots
+data/
+snapshots/
+
+# Local outputs
+output/
+coverage.txt
+
+# System
+.DS_Store

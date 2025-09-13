@@ -1,0 +1,42 @@
+name: Go CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.x'
+          cache: true
+      - name: Go mod tidy
+        run: go mod tidy
+      - name: Build
+        run: |
+          go build ./cmd/manager
+          go build ./cmd/agent
+      - name: Unit Tests
+        run: go test -v ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        run: docker build -t v2config-manager:ci .
+      - name: Smoke test docker-compose
+        run: |
+          cp config.example.yaml config.yaml
+          mkdir -p output data snapshots
+          docker-compose up -d --build
+          sleep 10
+          docker ps
+          curl -f http://localhost:8080/healthz
+          docker-compose down
