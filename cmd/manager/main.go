@@ -39,11 +39,11 @@ func NewManager(cfg *config.Config, log *logger.Logger, db *storage.DB) *Manager
 	for _, o := range cfg.Origins {
 		if o.Type == "local" {
 			origins = append(origins, probe.LocalOrigin{})
-				} else if o.Type == "agent" && o.URL != "" {
-					origins = append(origins, probe.AgentOrigin{
-						Label: o.Name, URL: o.URL, Token: o.Token,
-					})
-				}
+		} else if o.Type == "agent" && o.URL != "" {
+			origins = append(origins, probe.AgentOrigin{
+				Label: o.Name, URL: o.URL, Token: o.Token,
+			})
+		}
 	}
 	return &Manager{
 		cfg: cfg, log: log, db: db, origins: origins, snapDir: cfg.Service.SnapshotsDir,
@@ -253,14 +253,98 @@ func (m *Manager) probeOnceAndDecide(c storage.ConfigRecord) error {
 	return nil
 }
 
+// quickProbeAll runs probes for all configs with bounded concurrency.
+// It invokes probeOnceAndDecide for each config and waits for them to finish.
+func (m *Manager) quickProbeAll(ctx context.Context) {
+	cs, _ := m.db.ListConfigs()
+	sem := make(chan struct{}, m.cfg.Service.Concurrency)
+	for _, c := range cs {
+		if c.Deleted {
+			continue
+		}
+		sem <- struct{}{}
+		go func(cc storage.ConfigRecord) {
+			defer func(){ <-sem }()
+			_ = m.probeOnceAndDecide(cc)
+		}(c)
+	}
+	// drain to wait for goroutines to finish
+	for i := 0; i < cap(sem); i++ {
+		sem <- struct{}{}
+	}
+}
+
+// exportOutputsNow writes healthy configs to two files:
+// - plain text (one per line) at cfg.Subscriptions.Outputs.PlainPath
+// - base64-encoded combined text at cfg.Subscriptions.Outputs.Base64Path
+// If no healthy configs are found, it falls back to exporting merged configs (to avoid empty CI artifacts).
+func (m *Manager) exportOutputsNow() error {
+	now := time.Now()
+	plain := m.cfg.Subscriptions.Outputs.PlainPath
+	b64p := m.cfg.Subscriptions.Outputs.Base64Path
+	if plain == "" && b64p == "" {
+		// nothing configured
+		return nil
+	}
+	cs, _ := m.db.ListConfigs()
+	healthy := make([]string, 0, len(cs))
+
+	// Criteria for healthy configs:
+	// Attempts > 0, Successes > 0, ConsecutiveFailures < 3, LastSuccess within 6 hours
+	const fresh = 6 * time.Hour
+	for _, c := range cs {
+		if c.Deleted || c.Quarantine {
+			continue
+		}
+		s, err := m.db.GetStats(c.ID)
+		if err == nil && s.Attempts > 0 && s.Successes > 0 &&
+			s.ConsecutiveFailures < 3 &&
+			(now.Sub(time.Unix(s.LastSuccessUnix, 0)) <= fresh) {
+			healthy = append(healthy, c.Raw)
+		}
+	}
+
+	// Fallback: export merged list if no healthy entries found (prevents empty artifacts in CI)
+	if len(healthy) == 0 {
+		for _, c := range cs {
+			if c.Deleted || c.Quarantine {
+				continue
+			}
+			healthy = append(healthy, c.Raw)
+		}
+	}
+
+	// write plain
+	if plain != "" {
+		if err := os.MkdirAll(filepath.Dir(plain), 0o755); err != nil {
+			m.log.Error("mkdir_outputs_plain", "err", err.Error())
+		}
+		_ = os.WriteFile(plain, []byte(strings.Join(healthy, "\n")+"\n"), 0o644)
+	}
+	// write base64
+	if b64p != "" {
+		if err := os.MkdirAll(filepath.Dir(b64p), 0o755); err != nil {
+			m.log.Error("mkdir_outputs_b64", "err", err.Error())
+		}
+		comb := strings.Join(healthy, "\n")
+		b64 := base64.StdEncoding.EncodeToString([]byte(comb))
+		_ = os.WriteFile(b64p, []byte(b64), 0o644)
+	}
+
+	m.log.Info("outputs_written", "count", len(healthy), "plain", plain, "base64", b64p)
+	return nil
+}
+
 func (m *Manager) backgroundLoop(ctx context.Context) {
 	tickerFetch := time.NewTicker(time.Duration(m.cfg.Subscriptions.FetchIntervalSeconds) * time.Second)
 	tickerProbe := time.NewTicker(time.Duration(m.cfg.Service.ReprobeScheduleSeconds) * time.Second)
 	defer tickerFetch.Stop()
 	defer tickerProbe.Stop()
 
-	// initial fetch
+	// initial fetch + quick probe + export (helps CI pick up outputs immediately after start)
 	_, _ = m.mergeAndStore(ctx)
+	m.quickProbeAll(ctx)
+	_ = m.exportOutputsNow()
 
 	for {
 		select {
@@ -268,9 +352,12 @@ func (m *Manager) backgroundLoop(ctx context.Context) {
 			return
 		case <-tickerFetch.C:
 			_, _ = m.mergeAndStore(ctx)
+			// after each fetch also quick probe + export
+			m.quickProbeAll(ctx)
+			_ = m.exportOutputsNow()
 		case <-tickerProbe.C:
 			cs, _ := m.db.ListConfigs()
-			// bounded concurrency
+			// bounded concurrency probes
 			sem := make(chan struct{}, m.cfg.Service.Concurrency)
 			for _, c := range cs {
 				if c.Deleted {
@@ -286,6 +373,8 @@ func (m *Manager) backgroundLoop(ctx context.Context) {
 			for i := 0; i < cap(sem); i++ {
 				sem <- struct{}{}
 			}
+			// after each round of probes, update outputs
+			_ = m.exportOutputsNow()
 		}
 	}
 }
