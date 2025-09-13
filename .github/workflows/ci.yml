@@ -36,23 +36,49 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 25
+    env:
+      DOCKER_BUILDKIT: 1
+      COMPOSE_DOCKER_CLI_BUILD: 1
+      COMPOSE_PROJECT_NAME: v2mgr-ci
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Ensure Docker Compose v2 is available (no apt)
+      - name: Ensure Docker Compose v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker compose version >/dev/null 2>&1; then
+            echo "Compose plugin is already available"
+            docker compose version
+          else
+            echo "::warning::Compose plugin not found. Installing local plugin..."
+            mkdir -p ~/.docker/cli-plugins
+            ARCH="$(uname -m)"
+            case "$ARCH" in
+              x86_64|amd64)  ARCH_TAG="x86_64" ;;
+              aarch64|arm64) ARCH_TAG="aarch64" ;;
+              *)             ARCH_TAG="x86_64" ;;
+            esac
+            curl -fsSL -o ~/.docker/cli-plugins/docker-compose \
+              "https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-${ARCH_TAG}"
+            chmod +x ~/.docker/cli-plugins/docker-compose
+            docker compose version
+          fi
+
       - name: Prepare config and dirs
         run: |
           cp -f config.example.yaml config.yaml
           mkdir -p output data snapshots
 
-      # Compose via official action (no apt, no plugin install)
       - name: Compose up (build + start)
-        uses: docker/compose-action@v3
-        with:
-          compose-file: ./docker-compose.yml
-          up: -d --build
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose up -d --build
 
       - name: Wait for health
         shell: bash
@@ -63,24 +89,18 @@ jobs:
             tries=$((tries+1))
             if [ $tries -gt 40 ]; then
               echo "Timed out waiting for service health"
-              docker ps || true
-              # container_name in docker-compose.yml: v2mgr
-              docker logs v2mgr || true
+              docker compose ps || true
+              docker compose logs --no-color || true
               exit 1
             fi
             sleep 2
           done
           echo "Service healthy ✔"
 
-      - name: Dump container logs (always)
+      - name: Compose logs (always)
         if: always()
-        run: |
-          docker ps
-          docker logs v2mgr || true
+        run: docker compose logs --no-color || true
 
       - name: Compose down (always)
         if: always()
-        uses: docker/compose-action@v3
-        with:
-          compose-file: ./docker-compose.yml
-          down: -v
+        run: docker compose down -v || true
