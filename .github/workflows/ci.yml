@@ -15,20 +15,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21.x'
           cache: true
-
       - name: Go mod tidy
         run: go mod tidy
-
       - name: Build
         run: |
           go build ./cmd/manager
           go build ./cmd/agent
-
       - name: Unit Tests
         run: go test -v ./...
 
@@ -46,16 +42,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Ensure Docker Compose v2 is available (no apt)
       - name: Ensure Docker Compose v2
         shell: bash
         run: |
           set -euo pipefail
           if docker compose version >/dev/null 2>&1; then
-            echo "Compose plugin is already available"
             docker compose version
           else
-            echo "::warning::Compose plugin not found. Installing local plugin..."
+            echo "Installing compose plugin locally..."
             mkdir -p ~/.docker/cli-plugins
             ARCH="$(uname -m)"
             case "$ARCH" in
@@ -75,10 +69,7 @@ jobs:
           mkdir -p output data snapshots
 
       - name: Compose up (build + start)
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker compose up -d --build
+        run: docker compose up -d --build
 
       - name: Wait for health
         shell: bash
