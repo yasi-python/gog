@@ -5,27 +5,41 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21.x'
           cache: true
+
       - name: Go mod tidy
         run: go mod tidy
+
       - name: Build
         run: |
           go build ./cmd/manager
           go build ./cmd/agent
+
       - name: Unit Tests
         run: go test -v ./...
 
   docker:
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 25
+    env:
+      DOCKER_BUILDKIT: 1
+      COMPOSE_DOCKER_CLI_BUILD: 1
+      COMPOSE_PROJECT_NAME: v2mgr-ci
     steps:
       - uses: actions/checkout@v4
 
@@ -36,14 +50,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y docker-compose-plugin
+          docker --version
           docker compose version
 
-      - name: Build Docker image
+      - name: Build Docker image (optional prebuild)
         run: docker build -t v2config-manager:ci .
 
       - name: Smoke test with Docker Compose
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           cp config.example.yaml config.yaml
           mkdir -p output data snapshots
           docker compose up -d --build
@@ -61,4 +77,11 @@ jobs:
             sleep 2
           done
           echo "Service healthy ✔"
-          docker compose down -v
+
+      - name: Compose logs (always)
+        if: always()
+        run: docker compose logs --no-color || true
+
+      - name: Compose down (always)
+        if: always()
+        run: docker compose down -v || true
